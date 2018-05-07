@@ -55,7 +55,8 @@ int check_afi_ready(int slot_id);
 /*
  * An example to attach to an arbitrary slot, pf, and bar with register access.
  */
-int peek_poke_example(uint32_t value, int slot_id, int pf_id, int bar_id);
+//int peek_poke_example(uint32_t value, int slot_id, int pf_id, int bar_id);
+int peek_poke_example(FILE* fp, int slot_id, int pf_id, int bar_id);
 
 void usage(char* program_name) {
     printf("usage: %s [--slot <slot-id>][<poke-value>]\n", program_name);
@@ -67,9 +68,14 @@ uint32_t byte_swap(uint32_t value);
 
 uint32_t byte_swap(uint32_t value) {
     uint32_t swapped_value = 0;
-    int b;
+    /*int b;
     for (b = 0; b < 4; b++) {
         swapped_value |= ((value >> (b * 8)) & 0xff) << (8 * (3-b));
+    }*/
+    if(value >= 97 && value <= 122){
+        swapped_value = value - 32;
+    }else{
+        swapped_value = value;
     }
     return swapped_value;
 }
@@ -129,9 +135,14 @@ int main(int argc, char **argv) {
     /* Accessing the CL registers via AppPF BAR0, which maps to sh_cl_ocl_ AXI-Lite bus between AWS FPGA Shell and the CL*/
 
     printf("===== Starting with peek_poke_example =====\n");
-    rc = peek_poke_example(value, slot_id, FPGA_APP_PF, APP_PF_BAR0);
+    //open the input file here
+    FILE *fp = fopen("/home/centos/input.txt", "r");
+    
+    rc = peek_poke_example(fp, slot_id, FPGA_APP_PF, APP_PF_BAR0);
     fail_on(rc, out, "peek-poke example failed");
-
+    
+    //close the file
+    fclose(fp);
     printf("Developers are encouraged to modify the Virtual DIP Switch by calling the linux shell command to demonstrate how AWS FPGA Virtual DIP switches can be used to change a CustomLogic functionality:\n");
     printf("$ fpga-set-virtual-dip-switch -S (slot-id) -D (16 digit setting)\n\n");
     printf("In this example, setting a virtual DIP switch to zero clears the corresponding LED, even if the peek-poke example would set it to 1.\nFor instance:\n");
@@ -146,7 +157,7 @@ int main(int argc, char **argv) {
         "FPGA slot id 0 have the following Virtual LED:\n"
         "0000-0000-0000-0000\n"
     );
-
+    
 #ifndef SV_TEST
     return rc;
     
@@ -215,7 +226,21 @@ out:
 /*
  * An example to attach to an arbitrary slot, pf, and bar with register access.
  */
-int peek_poke_example(uint32_t value, int slot_id, int pf_id, int bar_id) {
+int peek_poke_example(FILE* fp, int slot_id, int pf_id, int bar_id) {
+    // read characters from file
+    char code[10000];
+    size_t n = 0;
+    int c;
+    
+    if (fp == NULL) return 0; //could not open file
+    
+    while ((c = fgetc(fp)) != EOF) {
+        code[n++] = (char)c;
+    }
+    
+    code[n] = '\0';
+    n = 0;
+
     int rc;
     /* pci_bar_handle_t is a handler for an address space exposed by one PCI BAR on one of the PCI PFs of the FPGA */
 
@@ -233,27 +258,36 @@ int peek_poke_example(uint32_t value, int slot_id, int pf_id, int bar_id) {
 #endif
     fail_on(rc, out, "Unable to attach to the AFI on slot id %d", slot_id);
     
-    /* write a value into the mapped address space */
-    uint32_t expected = byte_swap(value);
-    printf("Writing 0x%08x to HELLO_WORLD register (0x%016lx)\n", value, HELLO_WORLD_REG_ADDR);
-    rc = fpga_pci_poke(pci_bar_handle, HELLO_WORLD_REG_ADDR, value);
-
-    fail_on(rc, out, "Unable to write to the fpga !");
-
-    /* read it back and print it out; you should expect the byte order to be
-     * reversed (That's what this CL does) */
-    rc = fpga_pci_peek(pci_bar_handle, HELLO_WORLD_REG_ADDR, &value);
-    fail_on(rc, out, "Unable to read read from the fpga !");
-    printf("=====  Entering peek_poke_example =====\n");
-    printf("register: 0x%x\n", value);
-    if(value == expected) {
-        printf("TEST PASSED");
-        printf("Resulting value matched expected value 0x%x. It worked!\n", expected);
+    while (code[n] != '\0') {
+        value = (uint32_t)code[n];
+        /* write a value into the mapped address space */
+        uint32_t expected = byte_swap(value);
+        printf("Writing 0x%08x to HELLO_WORLD register (0x%016lx)\n", value, HELLO_WORLD_REG_ADDR);
+        rc = fpga_pci_poke(pci_bar_handle, HELLO_WORLD_REG_ADDR, value);
+        
+        fail_on(rc, out, "Unable to write to the fpga !");
+        
+        /* read it back and print it out; you should expect the byte order to be
+         * reversed (That's what this CL does) */
+        rc = fpga_pci_peek(pci_bar_handle, HELLO_WORLD_REG_ADDR, &value);
+        fail_on(rc, out, "Unable to read read from the fpga !");
+        printf("=====  Entering peek_poke_example =====\n");
+        printf("register: 0x%x\n", value);
+        if(value == expected) {
+            code[n] = 'A' + (value - 65);
+            printf("TEST PASSED");
+            printf("Resulting value matched expected value 0x%x. It worked!\n", expected);
+        }
+        else{
+            printf("TEST FAILED");
+            printf("Resulting value did not match expected value 0x%x. Something didn't work.\n", expected);
+        }
+        n++;
     }
-    else{
-        printf("TEST FAILED");
-        printf("Resulting value did not match expected value 0x%x. Something didn't work.\n", expected);
-    }
+    // write the result into a new file
+    FILE* newFile = fopen("/home/centos/output.txt","w+");
+    int return_val = fputs(code,newFile);
+    fclose(newFile);
 out:
     /* clean up */
     if (pci_bar_handle >= 0) {
