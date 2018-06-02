@@ -94,6 +94,7 @@ int main(int argc, char **argv) {
         svSetScope(scope);
     #endif
     
+    uint32_t value = 0xefbeadde;
     int slot_id = 0;
     int rc;
     
